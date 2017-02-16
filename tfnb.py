@@ -15,14 +15,14 @@ def log1p(x):
     value = tf.log(one_plus_x) * x / other_x
 
     # return x wherever x is +Inf, zero wherever x is zero
-    value = tf.select(tf.is_inf(x), x, value)
-    value = tf.select(tf.equal(x, 1.), tf.zeros_like(value), value)
+    value = tf.where(tf.is_inf(x), x, value)
+    value = tf.where(tf.equal(x, 1.), tf.zeros_like(value), value)
     return value
 
 def xlog1py(x, y):
     """return x*log1p(y), unless x==0; based on scipy.special.xlog1py"""
     value = x * log1p(y)
-    return tf.select(tf.equal(x, 0.), tf.zeros_like(value), value)
+    return tf.where(tf.equal(x, 0.), tf.zeros_like(value), value)
 
 def nbinom_ll(x, n, p):
     """modified from scipy.stats.nbinom._lpmf"""

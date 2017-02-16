@@ -1,7 +1,7 @@
 
 # coding: utf-8
 
-# In[1]:
+# In[ ]:
 
 import pandas as pd
 import scipy
@@ -70,7 +70,7 @@ epsilon = tf.random_normal(tf.shape(mu0))
 Z = mu0 + sigma0 * epsilon
 
 # Define layer 1's inputs with X and Z
-XZ = tf.concat(1, [X,Z])
+XZ = tf.concat([X,Z], 1)
 
 
 # # Hidden layers
@@ -103,12 +103,12 @@ bN_size = tf.Variable(scipy.special.logit(np.mean(y_array!=0, axis=0)) / 2 - 1,
                       dtype = tf.float32)
 bN_p_inf = tf.Variable(scipy.special.logit((np.mean(y_array == 0, axis=0))) / 5.0, 
                        dtype = tf.float32)
-bN = tf.concat(0, (bN_mu,bN_size,bN_p_inf))
+bN = tf.concat((bN_mu,bN_size,bN_p_inf), 0)
 
 # For convenience, give names to the three pieces of WN
-WN_mu, WN_size, WN_zi_p = tf.split(1, 3, WN)
+WN_mu, WN_size, WN_zi_p = tf.split(WN, 3, 1)
 
-linear_predictors = tf.split(1, 3, tf.matmul(HN, WN) + bN)
+linear_predictors = tf.split(tf.matmul(HN, WN) + bN, 3, 1)
 
 
 # Softplus to keep mu and size non-negative; sigmoid to keep zi_p in (0,1)
@@ -173,7 +173,7 @@ sess.run(init)
 
 # # Model-fitting loop
 
-# In[113]:
+# In[9]:
 
 # Fit the model
 n = 32
@@ -190,34 +190,34 @@ print(n_steps)
 
 # # Downstream analyses
 
-# In[114]:
+# In[10]:
 
 mus, sigmas = sess.run((mu0, sigma0), feed_dict=make_minibatch(N_rows))
 plt.scatter(range(N_z), np.mean(mus**2, axis = 0));
 np.var(mus)
 
 
-# In[115]:
+# In[11]:
 
 plt.hist(np.log10(np.ndarray.flatten(sess.run(nb_mu, feed_dict=make_minibatch(N_rows)))), bins = "fd");
 
 
-# In[116]:
+# In[12]:
 
 plt.hist(sess.run(tfnb.logit(zi_p), feed_dict=make_minibatch(N_rows)).flatten(), bins = "fd");
 
 
-# In[117]:
+# In[13]:
 
 plt.hist(np.log10(sess.run(nb_size, feed_dict=make_minibatch(N_rows)).flatten()), bins = "fd");
 
 
-# In[118]:
+# In[14]:
 
 plt.hist(scipy.special.logit(sess.run(nb_p, feed_dict=make_minibatch(N_rows)).flatten()), bins = "fd");
 
 
-# In[119]:
+# In[15]:
 
 print(np.sqrt(np.mean(sess.run(tf.square(W0_mu)))))
 print(np.sqrt(np.mean(sess.run(tf.square(W0_sigma)))))
@@ -228,36 +228,36 @@ print(np.sqrt(np.mean(sess.run(tf.square(WN_size)))))
 print(np.sqrt(np.mean(sess.run(tf.square(WN_zi_p)))))
 
 
-# In[120]:
+# In[16]:
 
 plt.scatter(np.log(np.mean(y_array, axis=0) + 1), 
             bN_mu.eval());
 
 
-# In[121]:
+# In[17]:
 
 plt.scatter(sess.run(tf.log(nb_mu[:,3]), feed_dict=make_minibatch(N_rows)),
              sess.run(tfnb.logit(nb_size[:,3]), feed_dict=make_minibatch(N_rows)));
 
 
-# In[122]:
+# In[18]:
 
 plt.scatter(range(N_z + N_x), np.sqrt(np.mean(W1.eval()**2, axis=1)))
 
 
-# In[123]:
+# In[19]:
 
 all_mu, all_zip = sess.run((nb_mu, zi_p), feed_dict=make_minibatch(N_rows))
 np.savetxt("mu.csv", all_mu, delimiter=",")
 np.savetxt("zip.csv", all_zip, delimiter=",")
 
 
-# In[124]:
+# In[20]:
 
 print(n_steps)
 
 
-# In[125]:
+# In[21]:
 
 sess.run([tfnb.gaussian_loss(tfnb.logit(nb_p), 0, 5, clip=0.1)/ N_rows,
                 tfnb.gaussian_loss(tfnb.logit(zi_p), 0, 5, clip=0.1)/ N_rows], 
