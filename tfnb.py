@@ -26,8 +26,10 @@ def xlog1py(x, y):
 
 def nbinom_ll(x, n, p):
     """modified from scipy.stats.nbinom._lpmf"""
-    coeff = tf.lgamma(n+x) - tf.lgamma(x+1) - tf.lgamma(n)
-    return coeff + n*tf.log(p) + xlog1py(x, -p)
+    with tf.variable_scope("negative_binomial"):
+        coeff = tf.lgamma(n+x) - tf.lgamma(x+1) - tf.lgamma(n)
+        out = coeff + n*tf.log(p) + xlog1py(x, -p)
+    return out
 
 def log_sum_exp(x, y):
     """numerically stable version of log(exp(x) + exp(y))"""
@@ -37,15 +39,17 @@ def log_sum_exp(x, y):
 # Zero-inflated negative binomial likelihood
 def zi_nbinom_ll(x, n, p, zi_p):
     """zero-inflated negative binomial likelihood"""
-    is_zero = tf.cast(tf.equal(x, tf.zeros_like(x)), tf.float32)
-    count_ll = nbinom_ll(x, n, p)
+    with tf.variable_scope("zero_inflation"):
+        is_zero = tf.cast(tf.equal(x, tf.zeros_like(x)), tf.float32)
+        count_ll = nbinom_ll(x, n, p)
 
-    # Zero could be zero-inflated, _or_ a non-inflated while _also_ matching count distribution
-    zeros_lls = log_sum_exp(tf.log(zi_p), tf.log(1 - zi_p) + count_ll)
-    # Nonzero can't be zero-inflated, _and_ must match the count distribution
-    nonzeros_lls = tf.log(1 - zi_p) + count_ll
+        # Zero could be zero-inflated, _or_ a non-inflated while _also_ matching count distribution
+        zeros_lls = log_sum_exp(tf.log(zi_p), tf.log(1 - zi_p) + count_ll)
+        # Nonzero can't be zero-inflated, _and_ must match the count distribution
+        nonzeros_lls = tf.log(1 - zi_p) + count_ll
 
-    return zeros_lls * is_zero + nonzeros_lls * (1-is_zero)
+        out = zeros_lls * is_zero + nonzeros_lls * (1-is_zero)
+        return out
 
 # Equation 10 from Kingma & Welling
 def kl(mu, sigma):
@@ -65,7 +69,9 @@ def make_weights(n_in, n_out):
 
 def logit(p):
     """log odds for tf tensors"""
-    return tf.log(p/(1-p))
+    with tf.variable_scope("logit"):
+        out = tf.log(p/(1-p))
+        return out
 
 def kumar_lpdf(x, a, b):
     """log probability density of the Kumaraswamy distribution"""
