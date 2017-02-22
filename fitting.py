@@ -103,13 +103,13 @@ HN = H2_normalized
 # In[6]:
 
 def mu_initializer(*args, **kwargs):
-    out = np.log(np.mean(y_array,axis=0)) + 1
+    out = 1.5 * np.log(np.mean(y_array,axis=0)) + 1
     return out
 def size_initializer(*args, **kwargs):
-    out = scipy.special.logit(np.mean(y_array!=0, axis=0)) / 2 - 1
+    out = scipy.special.logit(np.mean(y_array!=0, axis=0)) / 2.0
     return out
 def zi_p_initializer(*args, **kwargs):
-    out = scipy.special.logit((np.mean(y_array == 0, axis=0))) / 5.0
+    out = scipy.special.logit((np.mean(y_array == 0, axis=0))) / 2.0 - 1.0
     return out
 
 nb_mu = tf.layers.dense(HN,
@@ -148,11 +148,33 @@ rows = np.arange(y_array.shape[0])
 n_steps = 0.
 t = tf.placeholder(dtype=tf.float32)
 
+class minibatcher(object):
+    def __init__(self, nrow):
+        self.nrow = nrow
+        self.epochs = 0
+        self.pointer = 0
+        self.order = np.arange(nrow)
+        np.random.shuffle(self.order)
+    def get_rows(self, n):
+        if (n+self.pointer < self.nrow):
+            out = self.order[self.pointer + np.arange(n)]
+            self.pointer += n
+            return out
+        else:
+            # This is suboptimal because it throws out anything at the end
+            # of the epoch that doesn't divide evenly into `n`
+            np.random.shuffle(self.order)
+            self.pointer = 0
+            self.epochs += 1
+            return self.get_rows(n)
+
+mb = minibatcher(N_rows)
+            
 def make_minibatch(n,is_training):
-    rows = np.arange(N_rows)
-    if n!=N_rows:
-        np.random.shuffle(rows)
-    rows = rows[range(n)]
+    if n==N_rows:
+        rows = np.arange(N_rows)
+    else:
+        rows = mb.get_rows(n)
     
     # Coordinates of nonzero entries in sparse design matrix.
     # one site and one observer per row
@@ -165,7 +187,8 @@ def make_minibatch(n,is_training):
            N:n, 
            t:n_steps,
            training:is_training}
-full_feed = make_minibatch(N_rows,False)
+def full_feed():
+    return make_minibatch(N_rows,False)
 
 
 with tf.variable_scope("lossses"):
@@ -173,16 +196,18 @@ with tf.variable_scope("lossses"):
 
     # Put a prior on negative binomial's "p" and the zero-inflation parameter, 
     # which both cause numerical problems at 0 or 1
-    prior_loss = tfnb.gaussian_loss(tfnb.logit(nb_p), 0, 10) +                    tfnb.gaussian_loss(tfnb.logit(zi_p), 0, 10) +                    tf.reduce_sum(tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES))
+    prior_loss = tfnb.gaussian_loss(tfnb.logit(nb_p), 0, 10, clip=0.1) +                    tfnb.gaussian_loss(tfnb.logit(zi_p), 0, 10, clip=0.1) +                    tf.reduce_sum(tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES))
         
     variational_loss = tfnb.kl(mu0, sigma0)
     
     # Don't pay too much for the KL/entropy term until a few thousand iterations in, when
     # the network has started to settle down a bit.
-    loss = prediction_loss +            prior_loss +            variational_loss * (1 - tf.exp(-t / 5000.))
-    
-adam = tf.train.AdamOptimizer(learning_rate=0.001, beta1=0.9, beta2=0.999, epsilon=1e-08, 
-                              use_locking=False, name='Adam');
+    loss = prediction_loss +            prior_loss +            variational_loss# * tf.nn.sigmoid((t / 5000. - 5))
+
+# Epsilon is a fudge factor that makes Adam treat the gradients as more noisy than they 
+# actually are, which can be important if the gradients are often zero and the sparseness
+# stuff isn't working?
+adam = tf.train.AdamOptimizer(epsilon=1e-02);
 train_step = adam.minimize(loss);
 
 
@@ -199,7 +224,7 @@ train_writer.close()
 
 # # Model-fitting loop
 
-# In[9]:
+# In[27]:
 
 # Fit the model
 n = 32
@@ -207,7 +232,7 @@ n = 32
 for i in range(1000000):
     if n_steps % 1000 == 0:
         raw_losses = sess.run([prediction_loss, prior_loss, variational_loss, loss], 
-                              feed_dict=full_feed)
+                              feed_dict=full_feed())
         print(np.round([loss / N_rows for loss in raw_losses], 4))
     sess.run(train_step, feed_dict=make_minibatch(n,True))
     n_steps += 1
@@ -216,34 +241,34 @@ print(n_steps)
 
 # # Downstream analyses
 
-# In[10]:
+# In[28]:
 
 mus, sigmas = sess.run((mu0, sigma0), feed_dict=make_minibatch(N_rows, False))
 plt.scatter(range(N_z), np.mean(mus**2, axis = 0));
 np.var(mus)
 
 
-# In[11]:
+# In[29]:
 
-plt.hist(np.log10(np.ndarray.flatten(sess.run(nb_mu, feed_dict=make_minibatch(N_rows, False)))), bins = "fd");
-
-
-# In[12]:
-
-plt.hist(sess.run(tfnb.logit(zi_p), feed_dict=make_minibatch(N_rows,False)).flatten(), bins = "fd");
+plt.hist(np.log10(np.ndarray.flatten(sess.run(nb_mu, feed_dict=full_feed()))), bins = "fd");
 
 
-# In[13]:
+# In[30]:
 
-plt.hist(np.log10(sess.run(nb_size, feed_dict=make_minibatch(N_rows,False)).flatten()), bins = "fd");
-
-
-# In[14]:
-
-plt.hist(scipy.special.logit(sess.run(nb_p, feed_dict=make_minibatch(N_rows, False)).flatten()), bins = "fd");
+plt.hist(sess.run(tfnb.logit(zi_p), feed_dict=full_feed()).flatten(), bins = "fd");
 
 
-# In[15]:
+# In[31]:
+
+plt.hist(np.log10(sess.run(nb_size, feed_dict=full_feed()).flatten()), bins = "fd");
+
+
+# In[32]:
+
+plt.hist(scipy.special.logit(sess.run(nb_p, feed_dict=full_feed()).flatten()), bins = "fd");
+
+
+# In[33]:
 
 #print(np.sqrt(np.mean(sess.run(tf.square(W0_mu)))))
 #print(np.sqrt(np.mean(sess.run(tf.square(W0_sigma)))))
@@ -252,54 +277,68 @@ plt.hist(scipy.special.logit(sess.run(nb_p, feed_dict=make_minibatch(N_rows, Fal
 #print(np.sqrt(np.mean(sess.run(tf.square(WN_zi_p)))))
 
 
-# In[16]:
+# In[34]:
 
 #plt.scatter(np.log(np.mean(y_array, axis=0) + 1), 
 #            bN_mu.eval());
 
 
-# In[17]:
+# In[35]:
 
-plt.scatter(sess.run(tf.log(nb_mu[:,3]), feed_dict=make_minibatch(N_rows,False)),
-             sess.run(tfnb.logit(nb_size[:,3]), feed_dict=make_minibatch(N_rows,False)));
-
-
-# In[ ]:
+with tf.variable_scope("zero-inflation-prob", reuse=True):
+    plt.scatter(scipy.special.logit((np.mean(y_array == 0, axis=0))), 
+                tf.get_variable("bias").eval())
 
 
+# In[36]:
 
 
-# In[18]:
 
-#all_mu, all_zip = sess.run((nb_mu, zi_p), feed_dict=full_feed)
+#all_mu, all_zip = sess.run((nb_mu, zi_p), feed_dict=full_feed)()
 #np.savetxt("mu.csv", all_mu, delimiter=",")
 #np.savetxt("zip.csv", all_zip, delimiter=",")
 
 
-# In[19]:
+# In[37]:
 
 print(n_steps)
 
 
-# In[20]:
+# In[38]:
 
 tf.get_collection(tf.GraphKeys.WEIGHTS)
 
 
-# In[21]:
+# In[39]:
 
 with tf.variable_scope("layer1", reuse=True):
     plt.scatter(range(N_z + N_x), np.sum(tf.get_variable("kernel").eval()**2, axis=1))
 
 
-# In[22]:
+# In[40]:
 
 plt.scatter(range(N_s + N_o),
-            np.var(sess.run(W0_mu, feed_dict=make_minibatch(N_rows, True)), axis=1));
+            np.var(sess.run(W0_mu, feed_dict=full_feed()), axis=1));
 
 
-# In[23]:
+# In[41]:
 
 plt.scatter(range(N_s + N_o),
-            np.var(sess.run(W0_sigma, feed_dict=make_minibatch(N_rows, True)), axis=1));
+            np.var(sess.run(W0_sigma, feed_dict=full_feed()), axis=1));
+
+
+# In[42]:
+
+plt.scatter(site_array[range(500),1], 
+            np.mean(sess.run(mu0, feed_dict=full_feed())**2, 1)[range(500)])
+
+
+# In[43]:
+
+tf.nn.sigmoid((n_steps / 5000. - 5)).eval()
+
+
+# In[44]:
+
+np.arange(32).size
 
