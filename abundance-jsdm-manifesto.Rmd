@@ -1,0 +1,198 @@
+---
+title: "Abundance JSDM Manifesto"
+author: "David J. Harris"
+date: "10/27/2017"
+output:
+  pdf_document:
+    keep_tex: true
+    toc: true
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Building up to nonlinear JSDMs
+
+Our goal is to explain/understand/predict patterns in species' abundances.  Explanations and understanding are a bit squishy, so let's save them for later.  The quality of our predictions can be evaluated quantitatively, however. Specifically, the predictive performance of our models can be measured by their out-of-sample likelihood, i.e. the probability that a given model can tell us what a new assemblage will look like.
+
+## Stacked GLM-based SDMs
+
+Let's start with a stack of GLMs, one for predicting each species' abundance ($y$), given some environmental predictors ($x$). For example, the model for species $i$ migh look like
+
+$$y_i \sim \mathrm{Poisson}(g^{-1}(\alpha + \sum{x\beta})),$$
+where $g$ is the link function and $\phi$ is an overdispersion parameter.
+
+After fitting one of these models for each species, we can combine their predictions to make a prediction about the whole assemblage, $\vec{y}$.  The simplest way to do so is by assuming that the species are conditionally independent given $x$, i.e.
+
+$$p(\vec{y}|x) = \prod_i p(y_i|x)$$
+
+## Linear JSDMs (multi-output GLMMs)
+
+The independence assumption from the last section is bad. Another way to putit is that each species' abundance distribution is determined entirely by $x$; any deviations from this distribution are just random, independent fluctuations.  That's a tough assumption to swallow: two sites with the same climate, elevation, etc. can nevertheless have systematically different composition. For example, if one site has six duck species that all occur at unusually high densities for the local climate, we *might* not want to chalk that observation up to random fluctuations.
+
+So JSDMs model $p(\vec{y})$ directly, without assuming that $x$ has everything they need.  Specifically, they add latent variables, $z$, which can help explain these kinds of systematic differences among sites. This is just like random effects in a single GLMM, except that the random effects have consequences for multiple species instead of just one. Another way to think of it is that our stack of GLMs are functions of both $x$ and $z$, instead of just $x$. If $z$ takes high values at some sites and low values at others, we could use that to explain the systematic differences among sites that can't be explained by $x$. 
+
+Now, instead of independence among species given $x$, we have independence among species given $x$ *and* $z$
+
+$$p(\vec{y}|x,z) = \prod_i p(y_i|x, z),$$
+
+which is a much weaker assumption because we can choose our $z$ values however we like.
+
+The downside is: since we don't know $z$'s value, we no longer know exactly what to predict for $\vec{y}$, and we have to do some math. 
+
+Initially, we don't know what values $z$ takes at different sites, so we start with some prior distribution $p(z)$. This is usually a bunch of independent standard Gaussians, but could be anything that's convenient/useful. The predicted probability of observing $\vec{y}$ is given by a weighted average of the probabilities we'd expect given different values of $z$. In other words, we need to "integrate out" $z$ to give us our goal of modeling $p(\vec{y}|x)$:
+
+$$p(\vec{y} | x) = \int p(\vec{y} | x, z)p(z)~dz.$$
+
+Generally, folks deal with this integral (and/or its gradient) using some kind of Monte Carlo, i.e. trying a bunch of different values of $z$ and $\beta$ and seeing what works well.
+
+If you don't have too many species (e.g. <400), it's sometimes possible to have one dimension of $z$ for each species and to learn the correlations among them rather than learning a transformation of independent Gaussians; this turns out to be mostly equivalent but uses somewhat different language.
+
+## Non-independent sampling/observation events
+
+So far, we've talked about having an independent $z$ value for each observation. That assumption can be relaxed, as with other random effects models (e.g. spatial random effects, random effect estimates for each observer, etc.). This can make $z$ harder to model, but it doesn't fundamentally change anythihng, so I won't say any more here.
+
+## Nonlinearity
+
+So far, we've assumed that species' responses to the environmental variables have all been linear, which is unrealistic. The species might actually respond to $x^2$ or $\log(x_1 * x_2)$ or something more complicated instead. This is called *basis expansion*. So instead of having our predicted mean abundances depend linearly on $x$,
+
+$$\alpha + \sum{x\beta},$$
+let's expand our basis to include nonlinear functions of $x$,
+
+$$\alpha + \sum{f(x; \theta)\beta},$$
+
+where $f(x;\theta)$ indicates a nonlinear function of our environmental factors ($x$), parameterized by $\theta$. For more discussion of possible nonlinear functions, see the section on "choosing basis functions".
+
+With this change, our model isn't linear, but it's still additive. As a result, we can still (try to) interpret the $\beta$ coefficients. Each species's $\beta$ coefficients determine its response to a transformed variable instead of one we directly measured, but nothing else has changed. Different species are still responding to a common set of environmental variables, and their coefficients can be directly compared with one another.
+
+In principle, doing this isn't a problem for JSDMs: just add $z$ to our nonlinear function:
+
+$$\alpha + \sum{f(x, z; \theta)\beta}.$$
+
+In practice, the combination of latent varibles and nonlinearity makes the models harder to train/fit.
+
+## Inferring $z$ from $\vec{y}$
+
+[[todo]]
+
+## Predicting out-of-sample
+
+[[todo]]
+
+# Fitting nonlinear JSDMs
+
+## JSDM recap
+
+Our species' abundances are determined by a linear combination of our basis functions, plus an intercept:
+
+$$\alpha + \sum{f(x, z; \theta)\beta}.$$
+
+We want to find values of $\alpha$, $\beta$, and $\theta$ that we can use so that $p(\vec{y} | x)$ is high.  That objective function doesn't contain $z$, so we have to integrate it out. In other words, we want to adjust $\alpha$, $\beta$, and $\theta$ so that this objective function is as large as possible:
+
+$$p(\vec{y} | x) =\int p(\vec{y} | x, z)p(z) ~ dz.$$
+
+Here, $p(z)$ is our prior distribution on $z$. For our purposes, $p(z)$ will be a Gaussian distribution with covariance structure determined by whichever random effects we want to include. 
+
+For this section, I'll assume that we want to know the posterior distribution over $z$ but only need point estimates for $\alpha$, $\beta$, and $\theta$.  Some reasoning behind that, and some alternatives are listed under "Point estimates versus posterior distributions".
+
+## Expectation-maximization
+
+When you want to integrate out latent variables and get point estimates for the other parameters, expectation-maximization (EM) is handy. [[todo]]
+
+Depending on the value of $z$, the gradient could point in different directions; we need to average over all the possible values to figure out which direction to go.
+
+## Variational EM
+
+While the prior distribution on $z$ is Gaussian, our posterior distribution won't have any distribution in particular, which makes integration difficult. This would be true for most GLMMs and is especially true for us because of our nonlinearities.  But we can still *approximate* the posterior with a Gaussian distribution.  This is what `lme4` does by default.  But how do we choose the mean and covariance of our Gaussian?
+
+By default, `lme4` chooses the mean and covariance of its Gaussian approximation using the Laplace approximation, which probably wouldn't work well for us because of nonlinearities and the relatively high dimension we're likely to have for $z$. On the other hand, there's a new flavor of Laplace approximation that David Warton's lab has written about that might work better?
+
+Anyway, variational Bayes is probably our best bet. It lets us pick our Gaussians according to a very sensible criterion: choose the one that's closest to the full posterior (in the sense of minimizing the KL divergence). For relatively simple models, math wizards (e.g. David Warton's lab) can write this approximation down in closed form. For nonlinear JSDMs, that's completely hopeless, so we'll estimate our Gaussians' parameters with *stochastic* variational inference.
+
+[[todo: stochastic variational inference]]
+
+# Stuff that's not specifically JSDMs but is still relevant
+
+## Count distributions and overdispersion
+
+### Poisson
+
+If organisms were arranged independently in space and time, their abundance distribution would be Poisson. The Poisson distribution is a non-negative count distribution with a single adjustable parameter.
+
+The Poisson distribution's mean and variance are always the same, which is a very strong assumption that is often violated by real count data. Usually, the observed variance is too high for the Poisson distribution, in which case we call the data "overdispersed". This usually requires switching to a more flexible distribution.
+
+### Can't the latent variables account for any overdispersion we see?
+
+Yes, but:
+
+1. If the environment (i.e. the output of $f$) has fewer dimensions than the number of species, then there's no way for a given species' abundance to spike or crash independently of the others. This may not be realistic.
+
+2. The methods below let you add overdispersion using closed-form expressions, which is a big deal. Whatever method we're using for integrating out the latent variables won't have to do as much work this way.
+
+### Negative binomial
+
+The negative binomial distribution can be derived as a mixture of Poisson random variables. Since values from the negative binomial distribution can come from a range of different Poisson distributions, the negative binomial can have a much larger variance than a single Poisson distribution with the same mean.
+
+While the negative binomial distribution's mean/variance relationship is more flexible, the distribution still lacks flexibility.  In particular, raising overdispersion above a certain threshold forces the mode of the distribution to be zero no matter how large the mean is. If you keep going, almost all of the distribution ends up in a spike at zero, which may not be realistic. When this spike gets big enough, you start getting divide-by-zero errors and other garbage.
+
+### Beta negative binomial
+
+The beta negative binomial (BNB) is a mixture of NBs, which makes it more flexible than a single NB. In particular, its right tail can be much fatter and the tradeoff between having enough overdispersion and having a reasonable shape for the distribution is alleviated.
+
+In theory, all three parameters of the BNB could be modeled; in practice, I'm going to try to keep two of them as species-level constants and only use the model to predict the mean.
+
+Important facts about BNB:
+
+* The $\alpha$ parameter controls the thickness of the right tail: smaller values yield fatter tails.  The $k^{th}$ moment of the distribution is infinite whenever $\alpha$ is less than or equal to $k$. For example, letting $\alpha$ drop below 2 means you don't think the variance in a given species' abundance is finite. 
+* The values of the $r$ and $\beta$ parameters can always be switched without changing the probability distribution.  This is hard to see when the distribution is written in terms of Beta functions and/or factorials, but becomes clearer when it's written in terms of Gamma functions.
+* For given values of the mean and $\alpha$, you can use $\beta$ or $r$ to control the distribution's shape, particularly near the origin.  Note that the effect of raising/lowering $r$ (or $\beta$) depends on its value because of the symmetry discussed in the previous bullet point.
+
+## Zero-inflation
+
+Sometimes, count data sets have more zeros than can be explained easily using one of the distributions above.  The distribution can be augmented to add zeros.
+
+Adding zero-inflation to a probability distribution means increasing the probability mass assigned to zero. The base distribution (e.g. Poisson) becomes one component of a 2-component mixture; the other component is a point mass at zero.  This means there can be two kinds of zeros: zeros from the base distribution and zeros from the point mass.
+
+In an alternative to zero-inflation, called the hurdle model, the zeros all come from the same component, which is pure zero; the other component's zeros are removed. This requires adjusting the nonzero component's density, but means there is no uncertainty about which component was responsible for an observed data point.
+
+Either way, the degree to which zeros are altered is an adjustable parameter, and can be modeled as a species-level constant or using the same kinds of models used to predict the mean.
+
+## Species interactions
+
+### Residual correlations and partial correlations
+
+When $z$ has one dimension per species, it's common in the JSDM literature to see researchers treat its correlation matrix as evidence of species interactions.  After all, if two species co-occur more than can be explained by $x$, they must be facilitating one another, right?
+
+My research shows that this works very poorly, but that controlling for other species with *partial* correlations works well.
+
+### Gaussian copulas
+
+Modeling the partial correlations in $z$ won't work in our case, because the matrix of species' expected abundances will be low-rank and therefore can't be inverted.  But Gaussian copulas let us model (partial) correlations among variables regardless of their distribution, so we can just put copulas on our error distributions (e.g. negative binomial).
+
+[[todo: explain this]]
+
+## Choosing basis functions
+
+[[todo]]
+
+# Stuff that's worth thinking about
+
+## Point estimates versus posterior distributions
+
+* Posterior distributions are nice to have, since they tell you about the range of possibilities that are compatible with the data.
+* Exploring the full posterior distribution gets difficult when relationships are highly nonlinear. As a result, it's less useful and harder to obtain.  This makes point estimates more appealing.
+* We can use different methods for different parameters. I discuss the pros and cons of point estimates versus posterior distributions for each group of parameters below.
+
+$\alpha$ and $\beta$
+
+>These work a lot like GLM coefficients and are therefore relatively interpretable. Some coefficients will probably be much more tightly identified than others, and it could be helpful to know how certain we are about various estimates.
+
+$\theta$
+
+>From my perspective, $f$ is mostly a black box.  I don't feel any particular need to study the details of what goes on inside it and point estimates are probably much easier to deal with.  On the other hand, having uncertainty about the shapes of our basis functions might be kind of cool.
+
+$z$
+
+>This isn't really a parameter, but we still end up estimating its value (or distribution of possible values) for each site/observer/etc.  It's entirely possible that $z$'s posterior distribution will be so narrow that there won't be much practical improvement over a point mass. But maybe that will only be true once the model has mostly finished being trained? 
