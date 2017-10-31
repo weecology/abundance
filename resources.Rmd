@@ -1,0 +1,31 @@
+---
+title: "resources"
+author: "David J. Harris"
+date: "10/31/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Software
+
+* [[Not sure what's a good intro to Tensorflow?]]
+* [The paper for Edward](https://arxiv.org/abs/1610.09787), which handles random variables in the models
+
+## Variational Inference
+
+* [Variational Inference: A Review for Statisticians](https://arxiv.org/abs/1601.00670)
+* [Automatic Variational Inference in Stan](https://arxiv.org/abs/1506.03431) describes the general approach used for variational inference here (*automatic* or *stochastic* inference using more Monte Carlo and less math)
+* A [different variational approach](http://www.tandfonline.com/doi/abs/10.1080/10618600.2016.1164708) (no Monte Carlo sampling but lots of math) for specific JSDM-like problems.
+
+## JSDMs
+
+* [Review paper on JSDMs](http://www.cell.com/trends/ecology-evolution/abstract/S0169-5347(15)00240-2)
+* [Dave's mistnet paper for nonlinear JSDMs](http://onlinelibrary.wiley.com/doi/10.1111/2041-210X.12332/abstract)
+* 
+
+## Distributions
+
+* [Beta negative binomial](http://www.sciencedirect.com/science/article/pii/S0378375810004313?via%3Dihub)
