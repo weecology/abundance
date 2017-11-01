@@ -6,49 +6,73 @@ output:
   pdf_document:
     keep_tex: true
     toc: true
+geometry: "left=1.5in,right=1.5in,top=1in,bottom=1in"
+fontsize: 11pt
 ---
 
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse, quietly = TRUE)
+library(mgcv)
 ```
+
+# Objectives
+
+Our goal is to explain/understand/predict patterns in species' abundances.  Explanations and understanding are a bit squishy, so let's save them for later.  The quality of our predictions can be evaluated quantitatively, however. 
+
+Specifically, the predictive performance of our models can be measured by their out-of-sample likelihood, i.e. the probability that a given model can tell us what a new assemblage will look like. This is the quantity we will be maximizing throughout this document.
+
+# Notation
+
+There are four important matrices in this document.  The first three all have rows indexed by $i$, corresponding to observations (e.g. a transect run).
+
+* $x$: observed predictor variables describing, for example, the environmental conditions during a transect run.
+
+* $y$: observed response variables, e.g. species abundances. Sometimes, a row of this matrix will be written $\vec{y}$ to emphasize that it has multiple dimensions (one for each species). Columns of $y$ (species) are indexed by $j$. 
+
+* $z$: latent variables, i.e. random effects. Not directly observed or measured.
+
+Additionally, $f(x)$ and $f(x,z)$ will be used to represent the output of a nonlinear transformation parameterized by $\theta$. $f$ is parameterized by $\theta$.
+
+The fourth important matrix, $\beta$, contains species' responses to the environment.  It has one row per environmental variable and one column per species.
+
+Finally, each species has an intercept, $\alpha_j$
 
 # Building up to nonlinear JSDMs
 
-Our goal is to explain/understand/predict patterns in species' abundances.  Explanations and understanding are a bit squishy, so let's save them for later.  The quality of our predictions can be evaluated quantitatively, however. Specifically, the predictive performance of our models can be measured by their out-of-sample likelihood, i.e. the probability that a given model can tell us what a new assemblage will look like.
-
 ## Stacked GLM-based SDMs
 
-Let's start with a stack of GLMs, one for predicting each species' abundance ($y$), given some environmental predictors ($x$). For example, the model for species $i$ migh look like
+Let's start with a stack of GLMs, one for predicting each species' abundance ($y$), given some environmental predictors ($x$). For example, the model for species $j$ at site $i$ might look like
 
-$$y_i \sim \mathrm{Poisson}(g^{-1}(\alpha + \sum{x\beta})),$$
-where $g$ is the link function and $\phi$ is an overdispersion parameter.
+$$y_j \sim \mathrm{Poisson}(\mathrm{exp}(\alpha_j + \sum_k{x_{ik}\beta_{jk}})),$$
+where $k$ indexes our environmental variables. This model lets us predict different abundances at different sites, and can explain a decent portion of the variation we see in abundance (at least if $x$ is chosen well).
 
-After fitting one of these models for each species, we can combine their predictions to make a prediction about the whole assemblage, $\vec{y}$.  The simplest way to do so is by assuming that the species are conditionally independent given $x$, i.e.
+After fitting one of these models for each species, we can combine their predictions to make a prediction about the whole assemblage at site $i$, $\vec{y_i}$.  The simplest way to do so is by assuming that the species are conditionally independent given $x_i$, i.e.
 
-$$p(\vec{y}|x) = \prod_i p(y_i|x)$$
+$$p(\vec{y_i}|x_i) = \prod_j p(y_{ij}|x_i)$$
 
 ## Linear JSDMs (multi-output GLMMs)
 
-The independence assumption from the last section is bad. Another way to putit is that each species' abundance distribution is determined entirely by $x$; any deviations from this distribution are just random, independent fluctuations.  That's a tough assumption to swallow: two sites with the same climate, elevation, etc. can nevertheless have systematically different composition. For example, if one site has six duck species that all occur at unusually high densities for the local climate, we *might* not want to chalk that observation up to random fluctuations.
+The independence assumption from the last section is bad. It assumes that each species' abundance distribution is determined entirely by $x_i$; any deviations from this distribution are just random, independent fluctuations.  That's a tough assumption to swallow: two sites with the same climate, elevation, etc. can nevertheless have systematically different composition. For example, if one site has six duck species that all occur at unusually high densities for the local climate, we *might* not want to chalk that observation up to six independent events.
 
-So JSDMs model $p(\vec{y})$ directly, without assuming that $x$ has everything they need.  Specifically, they add latent variables, $z$, which can help explain these kinds of systematic differences among sites. This is just like random effects in a single GLMM, except that the random effects have consequences for multiple species instead of just one. Another way to think of it is that our stack of GLMs are functions of both $x$ and $z$, instead of just $x$. If $z$ takes high values at some sites and low values at others, we could use that to explain the systematic differences among sites that can't be explained by $x$. 
+So JSDMs stop assuming that $x$ has everything they need.  Specifically, they add latent variables, $z$, which can help explain these kinds of systematic differences among sites even if we don't know what's causing them. This is just like random effects in a GLMM, except that the random effects have consequences for multiple species instead of just one. Another way to think of it is that our stack of GLMs are functions of both $x$ and $z$, instead of just $x$. If $z$ takes high values at some sites and low values at others, we could use that to explain the systematic differences among sites that can't be explained by $x$. 
 
-Now, instead of independence among species given $x$, we have independence among species given $x$ *and* $z$
+Now, instead of independence among species given $x_i$, we have independence among the $j$ species given $x_i$ *and* $z_i$
 
-$$p(\vec{y}|x,z) = \prod_i p(y_i|x, z),$$
+$$p(\vec{y_i}|x_i,z_i) = \prod_j p(y_{ij}|x_i, z_i),$$
 
 which is a much weaker assumption because we can choose our $z$ values however we like.
 
 The downside is: since we don't know $z$'s value, we no longer know exactly what to predict for $\vec{y}$, and we have to do some math. 
 
-Initially, we don't know what values $z$ takes at different sites, so we start with some prior distribution $p(z)$. This is usually a bunch of independent standard Gaussians, but could be anything that's convenient/useful. The predicted probability of observing $\vec{y}$ is given by a weighted average of the probabilities we'd expect given different values of $z$. In other words, we need to "integrate out" $z$ to give us our goal of modeling $p(\vec{y}|x)$:
+Initially, we don't know what values $z$ takes at different sites, so we start with some prior distribution $p(z)$. This is usually a bunch of independent standard Gaussians, but could be anything that's convenient/useful. The predicted probability of observing $\vec{y}$ is given by a weighted average of the probabilities we'd expect given different values of $z$. In other words, we need to "integrate out" $z_i$ to accomplish our goal of modeling $p(\vec{y_i}|x_i)$:
 
-$$p(\vec{y} | x) = \int p(\vec{y} | x, z)p(z)~dz.$$
+$$p(\vec{y_i} | x_i) = \int p(\vec{y_i} | x_i, z_i)p(z_i)~dz.$$
 
-Generally, folks deal with this integral (and/or its gradient) using some kind of Monte Carlo, i.e. trying a bunch of different values of $z$ and $\beta$ and seeing what works well.
+Generally, folks deal with this integral (and/or its gradient) using some kind of Monte Carlo, i.e. trying a bunch of different values of $z$ and and seeing what works well.
 
-If you don't have too many species (e.g. <400), it's sometimes possible to have one dimension of $z$ for each species and to learn the correlations among them rather than learning a transformation of independent Gaussians; this turns out to be mostly equivalent but uses somewhat different language.
+If you don't have too many species (e.g. <400), it's sometimes possible to have one dimension of $z$ for each species and to learn the correlations among them rather than learning a transformation of independent Gaussians; this turns out to be mostly equivalent even though it's sometimes described as a completely different model.
 
 ## Non-independent sampling/observation events
 
@@ -56,30 +80,22 @@ So far, we've talked about having an independent $z$ value for each observation.
 
 ## Nonlinearity
 
-So far, we've assumed that species' responses to the environmental variables have all been linear, which is unrealistic. The species might actually respond to $x^2$ or $\log(x_1 * x_2)$ or something more complicated instead. This is called *basis expansion*. So instead of having our predicted mean abundances depend linearly on $x$,
+So far, we've assumed that species' responses to the environmental variables have all been linear, which is unrealistic. The species might actually respond to $x^2$ or $\log(x_1 * x_2)$ or something more complicated instead. This is called *basis expansion*. So instead of having our predicted mean abundances depend linearly on $x_i$,
 
-$$\alpha + \sum{x\beta},$$
-let's expand our basis to include nonlinear functions of $x$,
+$$\alpha_j + \sum_k{x_{ik}\beta_{jk}},$$
+let's expand our basis to include nonlinear functions of $x_i$,
 
-$$\alpha + \sum{f(x; \theta)\beta},$$
+$$\alpha_j + \sum_k{f_k(x_i; \theta)\beta_{jk}}.$$
 
-where $f(x;\theta)$ indicates a nonlinear function of our environmental factors ($x$), parameterized by $\theta$. For more discussion of possible nonlinear functions, see the section on "choosing basis functions".
+Here, $f(x;\theta)$ indicates a nonlinear function of our environmental factors ($x$), parameterized by $\theta$. Now we have $k$ basis functions and $k$ $\beta$ coefficients for each species. For more discussion of possible nonlinear functions, see the section on "choosing basis functions".
 
 With this change, our model isn't linear, but it's still additive. As a result, we can still (try to) interpret the $\beta$ coefficients. Each species's $\beta$ coefficients determine its response to a transformed variable instead of one we directly measured, but nothing else has changed. Different species are still responding to a common set of environmental variables, and their coefficients can be directly compared with one another.
 
-In principle, doing this isn't a problem for JSDMs: just add $z$ to our nonlinear function:
+In principle, adding nonlinearity isn't a problem for JSDMs: just add $z$ to our nonlinear function:
 
-$$\alpha + \sum{f(x, z; \theta)\beta}.$$
+$$\alpha_j + \sum_k{f_k(x_i, z_i; \theta)\beta_{jk}}.$$
 
-In practice, the combination of latent varibles and nonlinearity makes the models harder to train/fit.
-
-## Inferring $z$ from $\vec{y}$
-
-[[todo]]
-
-## Predicting out-of-sample
-
-[[todo]]
+In practice, the combination of latent varibles and nonlinearity makes the models harder to train/fit, as discussed in the next section.
 
 # Fitting nonlinear JSDMs
 
@@ -87,43 +103,131 @@ In practice, the combination of latent varibles and nonlinearity makes the model
 
 Our species' abundances are determined by a linear combination of our basis functions, plus an intercept:
 
-$$\alpha + \sum{f(x, z; \theta)\beta}.$$
+$$\alpha_j + \sum_k{f_k(x_i, zi; \theta)\beta_{jk}}.$$
 
-We want to find values of $\alpha$, $\beta$, and $\theta$ that we can use so that $p(\vec{y} | x)$ is high.  That objective function doesn't contain $z$, so we have to integrate it out. In other words, we want to adjust $\alpha$, $\beta$, and $\theta$ so that this objective function is as large as possible:
+We want to find values of $\alpha$, $\beta$, and $\theta$ that we can use so that $p(\vec{y} | x)$ is high.  That objective function doesn't contain $z$, so we have to integrate it out. In other words, we want to adjust $\beta$ and $\theta$ so that this objective function is as large as possible:
 
-$$p(\vec{y} | x) =\int p(\vec{y} | x, z)p(z) ~ dz.$$
+$$p(\vec{y_i} | x_i) =\int p(\vec{y_i} | x_i, z_i)p(z_i) ~ dz.$$
 
-Here, $p(z)$ is our prior distribution on $z$. For our purposes, $p(z)$ will be a Gaussian distribution with covariance structure determined by whichever random effects we want to include. 
+Here, $p(z_i)$ is our prior distribution on $z_i$. For our purposes, $p(z_i)$ will be a Gaussian distribution with covariance structure determined by whichever random effects we want to include. 
 
-For this section, I'll assume that we want to know the posterior distribution over $z$ but only need point estimates for $\alpha$, $\beta$, and $\theta$.  Some reasoning behind that, and some alternatives are listed under "Point estimates versus posterior distributions".
+## Steps in fitting a nonlinear JSDM
+
+For this section, I'll assume that we want to know the posterior distribution over $z$ but only need point estimates for $\beta$ and $\theta$.  Some reasoning behind that, and some alternatives, are listed under "Point estimates versus posterior distributions".
+
+### Inferring $\theta$ and $\beta$ (point estimates) given $z$ (random variable)
+
+If we knew $z$'s value at each site, we could just treat $z$ the same way we treat $x$ and use whatever algorithm we liked for fitting $\theta$ and $\beta$. We could just use random forests or backpropagation etc. This would let us determine which basis functions to use (e.g. "looks like temperature's effect is nonlinear around $0^o C$") and how to model each species' responses to those basis functions (e.g. "this species really likes warm weather").
+
+### Inferring $z$ given $\theta$ and $\beta$
+
+On the other hand, if we knew $\theta$ and $\beta$, we could learn about $z$ using information from $y$. For example, "there are lots of waterbirds here, so it must be a wetland."
 
 ## Expectation-maximization
 
-When you want to integrate out latent variables and get point estimates for the other parameters, expectation-maximization (EM) is handy. [[todo]]
+The two steps above seem to leave an infinite regress: to know $\theta$ and $\beta$ we need to know $z$, but to know $z$ we need $\theta$ and $\beta$. Fortunately, expectation-maximization (EM) gives us a way forward. It's an iterative algorithm that repeatedly loops through the two steps. Each time you go through the loop, a lower bound on the log-likelihood is increased, until the lower bound coincides with a local optimum and we've found a local maximum likelihood estimate for $\beta$ and $\theta$. Basically:
 
-Depending on the value of $z$, the gradient could point in different directions; we need to average over all the possible values to figure out which direction to go.
+>Start with a random guess about $\beta$ and $\theta$. 
+
+>While (not converged):
+
+>>**E step**: Given this guess, we then infer the distribution of $z$ (e.g. "a lot of species that like high $z$ values are here, so maybe $z$ has a high value").  
+
+>>**M step**: Treating our inferred distribution of $z$ values as "true", adjust $\beta$ and $\theta$ to maximize the *expected* value of $\mathrm{log}(y|x,z)$. In practice, we often only take one gradient step toward this objective.
+
+## Stochastic (Monte Carlo) EM
+
+Finding the expected value of $\mathrm{log}(y|x,z)$ exactly would require integrating out $z$, which is hard in our case. But we can collect samples from the posterior distribution of $z$, which is almost as good. Instead of averaging over the whole distribution, we just average over our samples. Using a finite number of samples introduces some noise, but folks have proved that this approach still converges to a local optimum as long as the estimates are unbiased.
+
+If the distribution of $z$ is simple, you can collect independent samples from it easily.  If it's messier, the options aren't great.  Dave's `mistnet` package used importance sampling, which is noisy, while other approaches use MCMC, which is slow (because collecting samples can be more expensive and you need to collect more of them to overcome the autocorrelation in the samples).
 
 ## Variational EM
 
-While the prior distribution on $z$ is Gaussian, our posterior distribution won't have any distribution in particular, which makes integration difficult. This would be true for most GLMMs and is especially true for us because of our nonlinearities.  But we can still *approximate* the posterior with a Gaussian distribution.  This is what `lme4` does by default.  But how do we choose the mean and covariance of our Gaussian?
+When collecting samples from the exact posterior distribution of $z$ is too expensive, we can fall back to collecting sampels from an approximate posterior.  
 
-By default, `lme4` chooses the mean and covariance of its Gaussian approximation using the Laplace approximation, which probably wouldn't work well for us because of nonlinearities and the relatively high dimension we're likely to have for $z$. On the other hand, there's a new flavor of Laplace approximation that David Warton's lab has written about that might work better?
+While the prior distribution on $z$ is Gaussian, our posterior distribution won't have any distribution in particular, which makes integration difficult. This would be true for most GLMMs and is especially true for us because of our nonlinearities.  Most numerical integration techniques will also struggle here because the dimension of $z$ can be high. But even though the posterior distribution isn't Gaussian, we can still assume that it's *approximately* Gaussian.  This is what `lme4` does by default.  Now instead of estimating $z$'s entire distribution, we just need to estimate its mean and (co)variance. In other words:
 
-Anyway, variational Bayes is probably our best bet. It lets us pick our Gaussians according to a very sensible criterion: choose the one that's closest to the full posterior (in the sense of minimizing the KL divergence). For relatively simple models, math wizards (e.g. David Warton's lab) can write this approximation down in closed form. For nonlinear JSDMs, that's completely hopeless, so we'll estimate our Gaussians' parameters with *stochastic* variational inference.
+$p(z_i | x_i, y_i) \approx q_i(z_i | x_i, y_i) = \mathcal{N}(\mu_i,\sigma_i),$
 
-[[todo: stochastic variational inference]]
+where $q$ indicates our approximate posterior distribution over $z_i$.  But how do we choose the mean and (co)variance?
 
-# Stuff that's not specifically JSDMs but is still relevant
+By default, `lme4` chooses the mean and covariance of its Gaussian approximation using the *Laplace approximation*, which probably wouldn't work well for us because of nonlinearities and the relatively high dimension we're likely to have for $z$ (but see @niku2017generalized for evidence that a new flavor of the Laplace approximation could still work well). Another closely related approximation is INLA, which I don't understand but might be worth considering.
 
-## Count distributions and overdispersion
+Anyway, variational Bayes is probably our best bet for integrating out $z$. It lets us pick our Gaussians according to a very sensible criterion: choose the one that's closest to the full posterior (in the sense of minimizing the KL divergence). For relatively simple models, math wizards (e.g. @hui2017variational) can write this approximation down in closed form, so no Monte Carlo is needed. For nonlinear JSDMs, that's completely hopeless, so we'll estimate our Gaussians' parameters with *stochastic* variational inference.
 
-### Poisson
+## Stochastic variational inference
+
+
+
+[[todo: stochastic variational inference]].
+
+Finally, it's worth noting that, if we decide that our Gaussian approximation isn't good enough, we can always improve on it with importance sampling [IWAE ref]. This basically lets us treat the variational estimate as a prior distribution on $z$ (which can be adjusted in light of new data) instead of the posterior distribution. This is much less noisy than `mistnet`'s importance sampling approach because the variational distribution can provide an excellent prior distribution for $z$.
+
+# Designing the model
+
+## Choosing basis functions ($f(x,z)$)
+
+In general, we probably expect species' responses to environmental variables to have relatively simple shapes without too many "wiggles".  For example, we don't necessarily expect responses to be linear, but if a model predicts high abundance at $20^o$, low abundance at $21.1^o$, and high abundance at $21.2^o$, ecological intuition suggests that the model has overfit.  Choosing our basis functions enables us to choose a good balance.
+
+Within a taxon, it makes sense that species would use a similar basis: most birds can probably "agree" on what a prairie looks like even if they disagree about whether it's a good habitat.  When possible, sharing the basis functions among species can save a lot of degrees of freedom because we don't need to learn what a prairie is for every single species.  In practice, sharing basis functions among species seems to smooth out the "wiggles" as well.
+
+Usually, ecologists pick basis expansions from a small menu (e.g. polynomials, multiplicative interactions, and logarithms). In SDM, they often choose trees (e.g. boosted trees or random forests), which are prone to unrealistic "wiggles". We can choose any basis we want for our JSDMs, as long as we can climb its gradient (which mostly rules out trees). Standard neural networks are probably the easiest and most flexible option.  It's worth thinking about what biologically-relevant constraints we could include if this flexibility leads to too many large "wiggles" or make $f$ too much of a black box. Alternatively, some other basis (e.g. radial basis functions or splines) may work better.
+
+Assuming we use a neural network, the immediate questions are: 
+
+* How many layers?
+
+* How do we regularize each layer?
+
+* How wide should each layer be?
+
+* What activation function to use for each layer?
+
+The latter two questions are especially important for the final hidden layer, i.e. the output of $f$.
+
+## Constraining $\beta$
+
+The $\beta$ terms are what differentiate our species from one another in this model, so it's important to think about them.
+
+Possible constraints on $\beta$:
+
+* Constraining the $L_1$ or $L_2$ norm of elements of $\beta$ makes sense (equivalent to lasso and ridge regression, respectively), although it's worth pointing out that the network can counteract this to some extent by simply making $f(x,z)$ have larger magnitudes.
+
+* Constraining the rank of the matrix of $\beta$ values (or something similar such as its nuclear norm) makes sense: it basically implies that only the first few principal components of the "environment" matter. This might be too strong a statement, but the first $n$ principal components probably do explain a lot of what's going on. This is helpful for interpreting the model and also for preventing overfitting, because it limits each species' degrees of freedom.
+
+* On the other hand, there could be some outliers (i.e. species whose responses to the environment don't live on the same manifold as everyone else's). One good way to allow for these exceptions is a "low rank plus sparse" formulation [ref].
+
+* We probably have good prior information about $\beta$ for many species (e.g. based on species' phylogenetic relationships or traits).  This would be especially useful for rare species. For example, a model might not have many observations of a rare woodpecker species, but simply knowing that it's a woodpecker could be helpful in estimating its vector of $\beta$ values.
+
+## Constraining $q(z)$
+
+When we predict out of sample, we don't have any information about $z_i$ yet. So our distribution over $z_i$ is just the prior distribution (e.g. a standard Gaussian). That sounds reasonable enough, but what if the aggregated posterior from the training set ($\frac{1}{n}\sum_i{q_i}$) doesn't look like the prior?
+
+As an example, consider what happens when the inferred distribution over $z$ across all sites in the training set looks like the red curve. When we see a new site and pick its distribution over $z$ from the black curve, we'll effectively be telling our model that the new site is different from anything it's ever seen before.
+
+```{r}
+# One prior distribution
+curve(dnorm(x), from = -4, to = 4, ylab = "density", xlab = "z")
+# Mixture of multiple q distributions across 3 sites
+curve(((dnorm(x, 0, 1/sqrt(3)) + 
+          dnorm(x, 1, 1/sqrt(3)) + 
+          dnorm(x, -1, 1/sqrt(3))) / 3), 
+      add = TRUE, col = 2)
+```
+
+For this reason, it makes sense to constrain the aggregated posterior over $z$ to look like the prior.  Alternatively, we could predict out-of-sample based on the red curve instead of the black one.
+
+If our goal is to make the two curves similar, we have several options.  One is to minimize the KL divergence between them, but that only works if we have enough observations to fill up $z$ (which gets exponentially harder as we increase $z$'s dimensionality). A better solution is penalizing the Maximum Mean Discrepancy (MMD) between the distributions. [[Todo: MMD]]
+
+# Count distributions
+
+## Poisson
 
 If organisms were arranged independently in space and time, their abundance distribution would be Poisson. The Poisson distribution is a non-negative count distribution with a single adjustable parameter.
 
 The Poisson distribution's mean and variance are always the same, which is a very strong assumption that is often violated by real count data. Usually, the observed variance is too high for the Poisson distribution, in which case we call the data "overdispersed". This usually requires switching to a more flexible distribution.
 
-### Can't the latent variables account for any overdispersion we see?
+## Can't the latent variables account for any overdispersion we see?
 
 Yes, but:
 
@@ -131,13 +235,13 @@ Yes, but:
 
 2. The methods below let you add overdispersion using closed-form expressions, which is a big deal. Whatever method we're using for integrating out the latent variables won't have to do as much work this way.
 
-### Negative binomial
+## Negative binomial
 
 The negative binomial distribution can be derived as a mixture of Poisson random variables. Since values from the negative binomial distribution can come from a range of different Poisson distributions, the negative binomial can have a much larger variance than a single Poisson distribution with the same mean.
 
 While the negative binomial distribution's mean/variance relationship is more flexible, the distribution still lacks flexibility.  In particular, raising overdispersion above a certain threshold forces the mode of the distribution to be zero no matter how large the mean is. If you keep going, almost all of the distribution ends up in a spike at zero, which may not be realistic. When this spike gets big enough, you start getting divide-by-zero errors and other garbage.
 
-### Beta negative binomial
+## Beta negative binomial
 
 The beta negative binomial (BNB) is a mixture of NBs, which makes it more flexible than a single NB. In particular, its right tail can be much fatter and the tradeoff between having enough overdispersion and having a reasonable shape for the distribution is alleviated.
 
@@ -173,11 +277,7 @@ Modeling the partial correlations in $z$ won't work in our case, because the mat
 
 [[todo: explain this]]
 
-## Choosing basis functions
-
-[[todo]]
-
-# Stuff that's worth thinking about
+# Other stuff that's worth thinking about
 
 ## Point estimates versus posterior distributions
 
