@@ -145,7 +145,7 @@ If the distribution of $z$ is simple, you can collect independent samples from i
 
 When collecting samples from the exact posterior distribution of $z$ is too expensive, we can fall back to collecting sampels from an approximate posterior.  
 
-While the prior distribution on $z$ is Gaussian, our posterior distribution won't have any distribution in particular, which makes integration difficult. This would be true for most GLMMs and is especially true for us because of our nonlinearities.  Most numerical integration techniques will also struggle here because the dimension of $z$ can be high. But even though the posterior distribution isn't Gaussian, we can still assume that it's *approximately* Gaussian.  This is what `lme4` does by default.  Now instead of estimating $z$'s entire distribution, we just need to estimate its mean and (co)variance. In other words:
+While the prior distribution on $z_i$ is Gaussian, our posterior distribution won't have any distribution in particular, which makes integration difficult. This would be true for most GLMMs and is especially true for us because of our nonlinearities.  Most numerical integration techniques will also struggle here because the dimension of $z_i$ can be high. But even though the posterior distribution isn't Gaussian, we can still assume that it's *approximately* Gaussian.  This is what `lme4` does by default.  Now instead of estimating $z_i$'s entire distribution, we just need to estimate its mean and (co)variance. In other words:
 
 $p(z_i | x_i, y_i) \approx q_i(z_i | x_i, y_i) = \mathcal{N}(\mu_i,\sigma_i),$
 
@@ -219,6 +219,25 @@ For this reason, it makes sense to constrain the aggregated posterior over $z$ t
 
 If our goal is to make the two curves similar, we have several options.  One is to minimize the KL divergence between them, but that only works if we have enough observations to fill up $z$ (which gets exponentially harder as we increase $z$'s dimensionality). A better solution is penalizing the Maximum Mean Discrepancy (MMD) between the distributions. [[Todo: MMD]]
 
+## Point estimates versus posterior distributions
+
+* Posterior distributions are nice to have, since they tell you about the range of possibilities that are compatible with the data.
+* Exploring the full posterior distribution gets difficult when relationships are highly nonlinear. As a result, it's less useful and harder to obtain.  This makes point estimates more appealing.
+* We can use different methods for different parameters. I discuss the pros and cons of point estimates versus posterior distributions for each group of parameters below.
+
+$\alpha$ and $\beta$
+
+>These work a lot like GLM coefficients and are therefore relatively interpretable. Some coefficients will probably be much more tightly identified than others, and it could be helpful to know how certain we are about various estimates.
+
+$\theta$
+
+>From my perspective, $f$ is mostly a black box.  I don't feel any particular need to study the details of what goes on inside it and point estimates are probably much easier to deal with.  On the other hand, having uncertainty about the shapes of our basis functions might be kind of cool.
+
+$z$
+
+>This isn't really a parameter, but we still end up estimating its value (or distribution of possible values) for each site/observer/etc.  It's entirely possible that $z$'s posterior distribution will be so narrow that there won't be much practical improvement over a point mass. But maybe that will only be true once the model has mostly finished being trained? 
+
+
 # Count distributions
 
 ## Poisson
@@ -263,36 +282,16 @@ In an alternative to zero-inflation, called the hurdle model, the zeros all come
 
 Either way, the degree to which zeros are altered is an adjustable parameter, and can be modeled as a species-level constant or using the same kinds of models used to predict the mean.
 
-## Species interactions
+# Species interactions
 
-### Residual correlations and partial correlations
+## Residual correlations and partial correlations
 
 When $z$ has one dimension per species, it's common in the JSDM literature to see researchers treat its correlation matrix as evidence of species interactions.  After all, if two species co-occur more than can be explained by $x$, they must be facilitating one another, right?
 
 My research shows that this works very poorly, but that controlling for other species with *partial* correlations works well.
 
-### Gaussian copulas
+## Gaussian copulas
 
 Modeling the partial correlations in $z$ won't work in our case, because the matrix of species' expected abundances will be low-rank and therefore can't be inverted.  But Gaussian copulas let us model (partial) correlations among variables regardless of their distribution, so we can just put copulas on our error distributions (e.g. negative binomial).
 
 [[todo: explain this]]
-
-# Other stuff that's worth thinking about
-
-## Point estimates versus posterior distributions
-
-* Posterior distributions are nice to have, since they tell you about the range of possibilities that are compatible with the data.
-* Exploring the full posterior distribution gets difficult when relationships are highly nonlinear. As a result, it's less useful and harder to obtain.  This makes point estimates more appealing.
-* We can use different methods for different parameters. I discuss the pros and cons of point estimates versus posterior distributions for each group of parameters below.
-
-$\alpha$ and $\beta$
-
->These work a lot like GLM coefficients and are therefore relatively interpretable. Some coefficients will probably be much more tightly identified than others, and it could be helpful to know how certain we are about various estimates.
-
-$\theta$
-
->From my perspective, $f$ is mostly a black box.  I don't feel any particular need to study the details of what goes on inside it and point estimates are probably much easier to deal with.  On the other hand, having uncertainty about the shapes of our basis functions might be kind of cool.
-
-$z$
-
->This isn't really a parameter, but we still end up estimating its value (or distribution of possible values) for each site/observer/etc.  It's entirely possible that $z$'s posterior distribution will be so narrow that there won't be much practical improvement over a point mass. But maybe that will only be true once the model has mostly finished being trained? 
