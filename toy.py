@@ -1,19 +1,15 @@
+
 # coding: utf-8
 
-# ## Imports
+# # Imports
 
 # In[1]:
 
 import numpy as np
+import scipy
 
 import tensorflow as tf
 from tensorflow.contrib.distributions import Distribution
-
-# Edward doesn't work with the most recent standalone keras,
-# so I'm specifying tensorflow.contrib.keras and giving it a special name
-import tensorflow.contrib.keras as tfk
-from tensorflow.contrib.keras import regularizers
-
 
 import edward as ed
 from edward.models import RandomVariable, Normal
@@ -27,137 +23,172 @@ get_ipython().magic('matplotlib inline')
 # In[2]:
 
 N = 1000
-x_train = np.linspace(-2, 2, num=N)
+x_train = np.linspace(-6, 6, num=N)
 color = np.random.randint(0, 2, N)
-y_train = np.cos(x_train) * (0.5 - color) + np.random.normal(0, 0.1, size=N)
+y_train = np.random.poisson(np.exp(2 + 2 * np.cos(x_train) * (0.5 - color)))
 x_train = x_train.astype(np.float32).reshape((N, 1))
-y_train = y_train.astype(np.float32)
+y_train = y_train.astype(np.int32)
 
 plt.scatter(x_train, y_train, c=color, s=15, edgecolors='none');
 
 
+# # Model
+
+# ### Latent variables
+
 # In[3]:
 
-# Optionally, give the network the color labels
-#x_train = np.concatenate([x_train, color.astype(np.float32).reshape((N,1))], 1)
+n_z = 1
+
+# Observation-level random effects: prior distribution
+z = Normal(loc=tf.zeros([N, n_z]), scale=tf.ones([N,n_z]))
 
 
-# ## Latent variables
+# ### Neural network
 
 # In[4]:
 
-# Observation-level random effects: prior distribution
-z = Normal(loc=tf.zeros([N, 1]), scale=tf.ones([N,1]))
+# Running this twice will throw an error because it can't overwrite the variables in
+# the layers' scope
+class network(object):
+    def f(self, x_object, z_object):
+        with tf.variable_scope("network"):
+            # Concatenate the inputs to the neural net
+            self.xz = tf.concat([x_object, z_object], 1)
+            
+            # These hidden layer(s) are just basis expansions---not intended to be interpreted---so no names
+            self.h = tf.layers.dense(self.xz, 50, activation=tf.nn.elu)
+            self.h = tf.layers.dense(self.h, 50, activation=tf.nn.elu)
 
-# Variational approximation to the posterior for observation-level random effects
-qz = Normal(loc = tf.Variable(tf.zeros([N,1])), 
-            scale = tf.nn.softplus(tf.Variable(0.55 * tf.ones([N,1]))))
+            # Low-dimensional "environment", to which all species respond in a generalized linear way.
+            self.env = tf.layers.dense(self.h, 10, activation=None, name="env")
+
+            # Expected abundances
+            self.out = tf.layers.dense(self.env, 1, activation=tf.exp, name="out")[:,0]
+
+            return self.env, self.out
+net = network()
 
 
-# ## Neural network
+# ### Outputs
 
 # In[5]:
 
-# If this code block throws an error about z not being a standard tensor,
-# it's a version incompatibility between Keras and Edward. See
-# https://github.com/fchollet/keras/issues/6979
-class network(object):
-    def f(self, x_object, z_object):
-        z_layer = tfk.layers.Dense(5, activation='sigmoid', kernel_regularizer=regularizers.l2(.001))(z_object)
-        self.out = tfk.layers.Dense(50, activation='elu', kernel_regularizer=regularizers.l2(.001))(tf.concat([x_object, z_layer], 1))
-        self.out = tfk.layers.Dense(1, activation='linear', kernel_regularizer=regularizers.l2(.001))(self.out)[:,0]
-        return self.out
-
-# Running this line twice will throw an error because it can't overwrite the variables in
-# the network scope
-with tf.variable_scope("network"):
-    net = network()
-    yhat = net.f(x_train, z)
-with tf.variable_scope("network", reuse=True):
-    qyhat = net.f(x_train, qz)
+env, yhat = net.f(x_train, z)
+y = ed.models.Poisson(yhat)
 
 
-# ## Objective function
+# ### Variational approximation
+# 
+# Approximate posteriors are denoted by adding `q` at the beginning of the name
 
 # In[6]:
 
+with tf.variable_scope("posterior"):
+    # Variational approximation to the posterior for observation-level random effects
+    qz = Normal(loc = tf.Variable(0.0 * tf.ones([N,n_z])), 
+                scale = tf.nn.softplus(tf.Variable(0.55 * tf.ones([N,n_z]))))
+
+    # Other approximate posteriors (with qz filled in for z like in `inference` below)
+    qenv = ed.copy(env, {z: qz})
+    qyhat = ed.copy(yhat, {z: qz})
+
+
+# # Fitting
+
+# ### Initialization
+
+# In[86]:
+
+# Count how many hill-climbing steps have been taken
 global_step = tf.Variable(0, trainable=False)
-temperature = 1 + 5E5 / (1 + 1E4 + tf.cast(global_step, tf.float32))
-y = Normal(loc=yhat, scale=tf.sqrt(0.01 * temperature))
 
-
-# In[ ]:
-
-
-
-
-# ## Initialization
-
-# In[ ]:
+learning_rate = 0.01
 
 inference = ed.KLqp({z: qz}, data={y: y_train})
 inference.initialize(var_list=tf.trainable_variables(), 
-                     n_samples=25,
+                     n_samples=5,
                      global_step = global_step,
-                     n_iter = 10)
+                     kl_scaling={z: 1}, 
+                     optimizer=tf.train.AdamOptimizer(learning_rate=learning_rate))
 
-# Initialize a TF session, then initialize all the variables
+# Start a session, then initialize all the variables
 sess = ed.get_session()
 tf.global_variables_initializer().run()
 
 
-# ## Run the model
+# ### Run
 
-# In[ ]:
+# In[111]:
 
-maxit = 100000
-chunk_size = 1000
-prog = tf.contrib.keras.utils.Progbar(maxit)
-for _ in range(maxit // chunk_size):
-    for _ in range(chunk_size):
+for _ in range(8):
+    for _ in range(5000):
         inference.update()
-    prog.add(chunk_size)
-    print(" ", inference.loss.eval())
+    learning_rate = learning_rate * .96
 
 
-# ## Diagnostics
+# # Diagnostics
 
-# In[28]:
+# In[112]:
 
-print(inference.t.eval(), "training iterations")
-print("Loss:", inference.loss.eval())
-print("temperature:", temperature.eval())
-
-
-# In[33]:
-
-# Distribution of y's mean in the training set
-for i in np.arange(np.floor(1E4 / N)):
-    plt.scatter(x_train[:,0], qyhat.eval(), s=4, c="darkred", alpha=0.05)
-#plt.scatter(x_train[:,0], y_train, c=color, s=25, edgecolors='black');
-plt.show()
-
-# Distribution of y's mean in the test set
-for i in np.arange(np.floor(1E4 / N)):
-    plt.scatter(x_train[:,0], yhat.eval(), s=4, c="darkblue", alpha=0.05)
-#plt.scatter(x_train[:,0], y_train, c=color, s=25, edgecolors='black');
-plt.show()
+print(global_step.eval())
+print(inference.loss.eval())
+learning_rate
 
 
-# In[30]:
+# In[125]:
 
-plt.figure(figsize=(8, 8))
-for i in np.arange(np.floor(1E5 / N)):
-    plt.scatter(x_train[:,0].flatten(), 
-                qz.eval(), s=10, c="darkred", alpha=0.05, edgecolors='none')
-plt.scatter(x_train[:,0], qz.mean().eval(), c="black", s = 20, alpha = 0.25, edgecolors='none');
+plt.figure(figsize=(10, 10))
+plt.scatter(x_train, y_train);
+for _ in range(20):
+    plt.scatter(x_train, yhat.eval(), alpha=0.1, c="black", s=10);
 
 
-# In[31]:
+# In[121]:
 
-plt.scatter(x_train[:,0], qz.mean().eval());
-plt.show()
-plt.scatter(x_train[:,0], qz.variance().eval());
+plt.figure(figsize=(10, 10))
+plt.scatter(x_train, y_train);
+for _ in range(20):
+    plt.scatter(x_train, qyhat.eval(), alpha=0.1, c="darkred", s=10);
+
+
+# In[115]:
+
+plt.hist(qz.stddev().eval().flatten(), bins=50);
+
+
+# In[127]:
+
+plt.figure(figsize=(10, 10))
+for _ in range(50):
+    plt.scatter(x_train, qz.eval(), alpha=0.1, c="black", s=5)
+
+
+# # Other outputs
+
+# In[117]:
+
+# List of parameters trained by the network.
+tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope="network")
+
+
+# In[118]:
+
+# Get the weights of the final layer (i.e. species-level coefficients)
+tf.get_default_graph().get_tensor_by_name('network/out/kernel:0').eval()
 
 
 # In[ ]:
+
+
+
+
+# In[ ]:
+
+
+
+
+# In[ ]:
+
+
+
