@@ -50,31 +50,25 @@ z = Normal(loc=tf.zeros([N, n_z]), scale=tf.ones([N,n_z]))
 
 # Running this twice will throw an error because it can't overwrite the variables in
 # the layers' scope
-class network(object):
-    def f(self, x_object, z_object):
-        with tf.variable_scope("network"):
-            # Concatenate the inputs to the neural net
-            self.xz = tf.concat([x_object, z_object], 1)
-            
-            # These hidden layer(s) are just basis expansions---not intended to be interpreted---so no names
-            self.h = tf.layers.dense(self.xz, 50, activation=tf.nn.elu)
-            self.h = tf.layers.dense(self.h, 50, activation=tf.nn.elu)
+with tf.variable_scope("network"):
+    # Concatenate the inputs to the neural net
+    xz = tf.concat([x_train, z], 1)
 
-            # Low-dimensional "environment", to which all species respond in a generalized linear way.
-            self.env = tf.layers.dense(self.h, 10, activation=None, name="env")
+    # These hidden layer(s) are just basis expansions---not intended to be interpreted---so no names
+    h = tf.layers.dense(xz, 50, activation=tf.nn.elu)
+    h = tf.layers.dense(h, 50, activation=tf.nn.elu)
 
-            # Expected abundances
-            self.out = tf.layers.dense(self.env, 1, activation=tf.exp, name="out")[:,0]
+    # Low-dimensional "environment", to which all species respond in a generalized linear way.
+    env = tf.layers.dense(h, 10, activation=None, name="env")
 
-            return self.env, self.out
-net = network()
+    # Expected abundances
+    yhat = tf.layers.dense(env, 1, activation=tf.exp, name="out")[:,0]
 
 
 # ### Outputs
 
 # In[5]:
 
-env, yhat = net.f(x_train, z)
 y = ed.models.Poisson(yhat)
 
 
@@ -98,7 +92,7 @@ with tf.variable_scope("posterior"):
 
 # ### Initialization
 
-# In[86]:
+# In[ ]:
 
 # Count how many hill-climbing steps have been taken
 global_step = tf.Variable(0, trainable=False)
@@ -119,7 +113,7 @@ tf.global_variables_initializer().run()
 
 # ### Run
 
-# In[111]:
+# In[ ]:
 
 for _ in range(8):
     for _ in range(5000):
@@ -129,14 +123,14 @@ for _ in range(8):
 
 # # Diagnostics
 
-# In[112]:
+# In[ ]:
 
 print(global_step.eval())
 print(inference.loss.eval())
 learning_rate
 
 
-# In[125]:
+# In[ ]:
 
 plt.figure(figsize=(10, 10))
 plt.scatter(x_train, y_train);
@@ -144,7 +138,7 @@ for _ in range(20):
     plt.scatter(x_train, yhat.eval(), alpha=0.1, c="black", s=10);
 
 
-# In[121]:
+# In[ ]:
 
 plt.figure(figsize=(10, 10))
 plt.scatter(x_train, y_train);
@@ -152,12 +146,12 @@ for _ in range(20):
     plt.scatter(x_train, qyhat.eval(), alpha=0.1, c="darkred", s=10);
 
 
-# In[115]:
+# In[ ]:
 
 plt.hist(qz.stddev().eval().flatten(), bins=50);
 
 
-# In[127]:
+# In[ ]:
 
 plt.figure(figsize=(10, 10))
 for _ in range(50):
@@ -166,13 +160,13 @@ for _ in range(50):
 
 # # Other outputs
 
-# In[117]:
+# In[ ]:
 
 # List of parameters trained by the network.
 tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope="network")
 
 
-# In[118]:
+# In[ ]:
 
 # Get the weights of the final layer (i.e. species-level coefficients)
 tf.get_default_graph().get_tensor_by_name('network/out/kernel:0').eval()
