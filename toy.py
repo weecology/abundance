@@ -9,36 +9,60 @@ import numpy as np
 import scipy
 
 import tensorflow as tf
-from tensorflow.contrib.distributions import Distribution
 
 import edward as ed
 from edward.models import RandomVariable, Normal
 
+
 import matplotlib.pyplot as plt
 get_ipython().magic('matplotlib inline')
+
+print(tf.__version__)
 
 
 # # Data
 
 # In[2]:
 
-N = 1000
-x_train = np.linspace(-6, 6, num=N)
-color = np.random.randint(0, 2, N)
-y_train = np.random.poisson(np.exp(2 + 2 * np.cos(x_train) * (0.5 - color)))
-x_train = x_train.astype(np.float32).reshape((N, 1))
-y_train = y_train.astype(np.int32)
+N = 1000 # Number of data points
 
-plt.scatter(x_train, y_train, c=color, s=15, edgecolors='none');
+# One uniformly-distributed predictor, one Gaussian-distributed predictor
+x_train = np.column_stack([np.linspace(-2, 2, num=N), np.random.normal(0, 1, N)]).astype(np.float32)
+
+# Only the first predictor matters
+w = np.array([[3, -3], [0,0]])
+
+# "True" latent variable" for each data point
+true_z = np.random.normal(0, .5, N)
+
+# Expected abundance
+mu = np.exp(3 + np.sin(np.dot(x_train, w)) + np.column_stack([true_z, true_z]))
+
+# Observed abundances
+y_train = np.random.poisson(mu).astype(np.int32)
+
+
+# In[3]:
+
+# Mu vs x
+plt.scatter(x_train[:,0], mu[:,0], s=15, edgecolors='none');
+plt.scatter(x_train[:,0], mu[:,1], s=15, edgecolors='none');
+
+
+# In[4]:
+
+# Mu vs true_z
+plt.scatter(true_z, mu[:,0], s=15, edgecolors='none');
+plt.scatter(true_z, mu[:,1], s=15, edgecolors='none');
 
 
 # # Model
 
 # ### Latent variables
 
-# In[3]:
+# In[5]:
 
-n_z = 1
+n_z = 2
 
 # Observation-level random effects: prior distribution
 z = Normal(loc=tf.zeros([N, n_z]), scale=tf.ones([N,n_z]))
@@ -46,43 +70,38 @@ z = Normal(loc=tf.zeros([N, n_z]), scale=tf.ones([N,n_z]))
 
 # ### Neural network
 
-# In[4]:
+# In[6]:
 
 # Running this twice will throw an error because it can't overwrite the variables in
 # the layers' scope
-class network(object):
-    def f(self, x_object, z_object):
-        with tf.variable_scope("network"):
-            # Concatenate the inputs to the neural net
-            self.xz = tf.concat([x_object, z_object], 1)
-            
-            # These hidden layer(s) are just basis expansions---not intended to be interpreted---so no names
-            self.h = tf.layers.dense(self.xz, 50, activation=tf.nn.elu)
-            self.h = tf.layers.dense(self.h, 50, activation=tf.nn.elu)
+# Note that the regularizers in tf.layers have no effect on Edward models
+with tf.variable_scope("network"):
+    # Concatenate the inputs to the neural net
+    xz = tf.concat([x_train, z], 1)
 
-            # Low-dimensional "environment", to which all species respond in a generalized linear way.
-            self.env = tf.layers.dense(self.h, 10, activation=None, name="env")
+    # These hidden layer(s) are just basis expansions---not intended to be interpreted---so no names
+    h = tf.layers.dense(xz, 100, activation=tf.nn.elu)
+    #h = tf.layers.dense(h, 50, activation=tf.nn.elu)
 
-            # Expected abundances
-            self.out = tf.layers.dense(self.env, 1, activation=tf.exp, name="out")[:,0]
+    # Low-dimensional "environment", to which all species respond in a generalized linear way.
+    env = tf.layers.dense(h, 10, activation=tf.nn.elu, name="env")
 
-            return self.env, self.out
-net = network()
+    # Expected abundances
+    yhat = tf.layers.dense(env, 2, activation=tf.exp, name="out")
 
 
 # ### Outputs
 
-# In[5]:
+# In[7]:
 
-env, yhat = net.f(x_train, z)
 y = ed.models.Poisson(yhat)
 
 
-# ### Variational approximation
+# ### Approximate posterior distribution (variational approximation)
 # 
 # Approximate posteriors are denoted by adding `q` at the beginning of the name
 
-# In[6]:
+# In[8]:
 
 with tf.variable_scope("posterior"):
     # Variational approximation to the posterior for observation-level random effects
@@ -98,19 +117,16 @@ with tf.variable_scope("posterior"):
 
 # ### Initialization
 
-# In[86]:
+# In[9]:
 
 # Count how many hill-climbing steps have been taken
 global_step = tf.Variable(0, trainable=False)
 
-learning_rate = 0.01
-
 inference = ed.KLqp({z: qz}, data={y: y_train})
 inference.initialize(var_list=tf.trainable_variables(), 
-                     n_samples=5,
+                     n_samples=10,
                      global_step = global_step,
-                     kl_scaling={z: 1}, 
-                     optimizer=tf.train.AdamOptimizer(learning_rate=learning_rate))
+                     kl_scaling={z: 1})
 
 # Start a session, then initialize all the variables
 sess = ed.get_session()
@@ -119,60 +135,77 @@ tf.global_variables_initializer().run()
 
 # ### Run
 
-# In[111]:
+# In[10]:
 
-for _ in range(8):
-    for _ in range(5000):
-        inference.update()
-    learning_rate = learning_rate * .96
+for _ in range(25000):
+    inference.update()
 
 
 # # Diagnostics
 
-# In[112]:
+# In[11]:
 
 print(global_step.eval())
 print(inference.loss.eval())
-learning_rate
 
 
-# In[125]:
+# In[12]:
 
 plt.figure(figsize=(10, 10))
-plt.scatter(x_train, y_train);
+plt.scatter(x_train[:,0], np.log(mu[:,0]));
 for _ in range(20):
-    plt.scatter(x_train, yhat.eval(), alpha=0.1, c="black", s=10);
+    plt.scatter(x_train[:,0], np.log(yhat.eval()[:,0]), alpha=0.1, c="black", s=10);
 
 
-# In[121]:
+# In[13]:
 
 plt.figure(figsize=(10, 10))
-plt.scatter(x_train, y_train);
+plt.scatter(x_train[:,0], np.log(mu[:,0]));
 for _ in range(20):
-    plt.scatter(x_train, qyhat.eval(), alpha=0.1, c="darkred", s=10);
+    plt.scatter(x_train[:,0], np.log(qyhat.eval()[:,0]), alpha=0.1, c="darkred", s=10);
 
 
-# In[115]:
+# In[14]:
 
-plt.hist(qz.stddev().eval().flatten(), bins=50);
+plt.hist(qz.stddev().eval(), bins=50);
 
 
-# In[127]:
+# In[26]:
 
-plt.figure(figsize=(10, 10))
-for _ in range(50):
-    plt.scatter(x_train, qz.eval(), alpha=0.1, c="black", s=5)
+# Approximate posterior distributions of z, given x. Should be no big trends or gaps
+for _ in range(n_z):
+    for _ in range(25):
+        plt.scatter(x_train[:,0], qz.eval()[:,which_latent], alpha=0.1, c="darkred", s=5)
+    plt.show()
+
+
+# In[27]:
+
+nn = 1000
+xx = 0
+qxx = 0
+for _ in range(nn):
+    xx += yhat.eval() / nn
+    qxx += qyhat.eval() / nn
+    
+# Predicted mean versus x
+plt.scatter(x_train[:,0], np.log(mu)[:,1])
+plt.scatter(x_train[:,0], np.log(xx)[:,1], s=10, alpha=0.5, c="black");
+plt.show()
+
+# Inferred mu versus "true" mu
+plt.scatter(np.log(qxx[:,0].flatten()), np.log(mu[:,0]).flatten(), c="darkred");
 
 
 # # Other outputs
 
-# In[117]:
+# In[24]:
 
 # List of parameters trained by the network.
 tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope="network")
 
 
-# In[118]:
+# In[18]:
 
 # Get the weights of the final layer (i.e. species-level coefficients)
 tf.get_default_graph().get_tensor_by_name('network/out/kernel:0').eval()
