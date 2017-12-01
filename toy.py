@@ -3,7 +3,7 @@
 
 # # Imports
 
-# In[1]:
+# In[ ]:
 
 import numpy as np
 import scipy
@@ -24,7 +24,8 @@ print(tf.__version__)
 
 # In[2]:
 
-N = 500 # Number of data points
+N = 1000 # Number of data points
+mini_N = 101 # Minibatch size
 
 # One uniformly-distributed predictor, one Gaussian-distributed predictor
 x_train = np.column_stack([np.linspace(-2, 2, num=N), np.random.normal(0, 1, N)]).astype(np.float32)
@@ -39,7 +40,7 @@ true_z = np.random.normal(0, .5, N)
 mu = np.exp(3 + np.sin(np.dot(x_train, w)) + np.column_stack([true_z, true_z, true_z]))
 
 # Observed abundances
-y_train = np.random.poisson(mu).astype(np.int32)
+y_train = np.random.poisson(mu).astype(np.float32)
 
 
 # In[3]:
@@ -100,7 +101,10 @@ with tf.variable_scope("network"):
 
 # In[7]:
 
-y = ed.models.Poisson(yhat)
+# Placeholder telling which rows to use (e.g. for minibatching)
+row_ph = tf.placeholder(tf.int32, [None])
+
+y = ed.models.Poisson(tf.gather(yhat, row_ph))
 
 
 # ### Approximate posterior distribution (variational approximation)
@@ -119,20 +123,19 @@ with tf.variable_scope("posterior"):
     qyhat = ed.copy(yhat, {z: qz})
 
 
-# # Fitting
-
-# ### Initialization
+# # Boilerplate for model fitting
 
 # In[9]:
 
 # Count how many hill-climbing steps have been taken
 global_step = tf.Variable(0, trainable=False)
 
-inference = ed.KLqp({z: qz}, data={y: y_train})
+inference = ed.KLqp({z: qz}, 
+                    {y: tf.gather(y_train, row_ph)})
 inference.initialize(var_list=tf.trainable_variables(), 
-                     n_samples=10,
+                     n_samples=1,
                      global_step = global_step,
-                     kl_scaling={z: 1},
+                     kl_scaling={z: N / mini_N},
                      optimizer=tf.train.AdamOptimizer(learning_rate=.001))
 
 # Start a session, then initialize all the variables
@@ -140,25 +143,38 @@ sess = ed.get_session()
 tf.global_variables_initializer().run()
 
 
-# ### Run
+# In[ ]:
 
-# In[20]:
 
-for _ in range(10000):
-    inference.update()
+
+
+# # Run
+
+# In[ ]:
+
+row_d = tf.contrib.data.Dataset.range(N).shuffle(N).batch(mini_N).repeat()
+iter_d = row_d.make_one_shot_iterator()
+
+for _ in range(2000):
+    rows = iter_d.get_next().eval()
+    if len(rows) != mini_N:
+        # kl_scaling won't work properly if the number of rows varies.
+        # This will happen at the end of each epoch if the N % mini_N != 0
+        rows = iter_d.get_next().eval()
+    inference.update(feed_dict={row_ph: rows})
 
 
 # # Diagnostics
 
-# In[21]:
+# In[ ]:
 
 print(global_step.eval())
-print(inference.loss.eval())
+print(inference.loss.eval(feed_dict={row_ph: np.arange(N), y:y_train}))
 
 
-# In[22]:
+# In[ ]:
 
-which_species = 1
+which_species = 0
 
 # Predictions using the prior on z
 plt.figure(figsize=(10, 10))
@@ -167,7 +183,7 @@ for _ in range(20):
     plt.scatter(x_train[:,0], np.log(yhat.eval()[:,which_species]), alpha=0.1, c="black", s=10);
 
 
-# In[23]:
+# In[ ]:
 
 # Predictions using the approximate posterior on z
 plt.figure(figsize=(10, 10))
@@ -176,12 +192,12 @@ for _ in range(20):
     plt.scatter(x_train[:,0], np.log(qyhat.eval()[:,which_species]), alpha=0.1, c="darkred", s=10);
 
 
-# In[24]:
+# In[ ]:
 
 plt.hist(qz.stddev().eval(), bins=50);
 
 
-# In[25]:
+# In[ ]:
 
 # Approximate posterior distributions of z, given x. Should be no big (low-frequency?) trends or gaps
 for i in range(n_z):
@@ -190,7 +206,7 @@ for i in range(n_z):
     plt.show()
 
 
-# In[26]:
+# In[ ]:
 
 nn = 1000
 xx = 0
@@ -200,15 +216,15 @@ for _ in range(nn):
     qxx += qyhat.eval() / nn
     
 # Predicted mean versus x
-plt.scatter(x_train[:,0], np.log(mu)[:,1])
-plt.scatter(x_train[:,0], np.log(xx)[:,1], s=10, alpha=0.5, c="black");
+plt.scatter(x_train[:,0], np.log(mu)[:,which_species])
+plt.scatter(x_train[:,0], np.log(xx)[:,which_species], s=10, alpha=0.5, c="black");
 plt.show()
 
 # Inferred mu versus "true" mu
-plt.scatter(np.log(qxx[:,0].flatten()), np.log(mu[:,0]).flatten(), c="darkred");
+plt.scatter(np.log(qxx[:,which_species].flatten()), np.log(mu[:,which_species]).flatten(), c="darkred");
 
 
-# In[27]:
+# In[ ]:
 
 # "Residual correlation" among species
 np.corrcoef(np.log(yhat.eval() / xx).T)
@@ -216,16 +232,37 @@ np.corrcoef(np.log(yhat.eval() / xx).T)
 
 # # Other outputs
 
-# In[18]:
+# In[ ]:
 
 # List of parameters trained by the network.
 tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope="network")
 
 
-# In[19]:
+# In[ ]:
 
 # Get the weights of the final layer (i.e. species-level coefficients)
 tf.get_default_graph().get_tensor_by_name('network/out/kernel:0').eval()
+
+
+# # To do:
+# 
+# * Put priors/weight decay on coefficients
+# * Fix first dimension of tensors:
+#     * predicting with different N
+#     * minibatching
+# * Extend the response distribution
+#     * overdispersion
+#     * zero-inflation
+# * Repeated measures for sites & observers
+# * Penalties to discourage structure in `qz`?
+# * Imputation/missing values?
+#     * Maybe only after model has already been trained, like Mistnet's figure 5
+
+# In[ ]:
+
+q = qz.variance().eval()
+plt.scatter(x_train[:,0], q[:,0], alpha=0.25)
+plt.scatter(x_train[:,0], q[:,1], alpha=0.25)
 
 
 # In[ ]:
