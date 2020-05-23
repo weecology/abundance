@@ -1,0 +1,56 @@
+---
+title: "Notation and Model Structure"
+author: "Hao Ye"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+---
+
+## Notation
+
+*note: we use "site", but you may reasonable substitute "transect"*
+
+| symbol       |  definition                                                 |
+| ------------ | ----------------------------------------------------------- |
+| $y_{i,j}$    | **actual** abundance of species $i$ at site $j$ |
+| $\mu_{i,j}$ | mean abundance for species $i$ at site $j$ |
+| $p_{i,j}$ | zero-inflation param for species $i$ at site $j$ |
+| $\bar{x}_j$  | observed environmental properties of site $j$ |
+| $\bar{z}_j$  | **unobserved** latent properties of site $j$ |
+| $f_m \left(\bar{x}, \bar{z}; \theta_m\right)$ | basis function $m$ with params $\theta$ |
+| $\beta_{i,m}^{\mu}$ | sensitivity of mean ($\mu$) to basis function $m$ for species $i$ |
+| $\beta_{i,m}^p$ | sensitivity of zero-inflation param ($p$) to basis function $m$ for species $i$ |
+| $\alpha_i$ | shape parameter for the beta negative-binomial distribution |
+| $r_i$ | "number of failures" parameter for the beta negative-binomial distribution |
+
+## Equations
+
+Mean abundance for species $i$ at site $j$ depends on the properties of the site (via the basis functions $f_m$) with sensitivities $\beta_{i,m}^{\mu}$
+
+$$ \mu_{i,j} = \exp{\left(\sum_m{f_m \left(\bar{x}, \bar{z}; \theta\right) \beta_{i,m}^{\mu}}\right)}$$
+
+Probability of zero-inflation for species $i$ at site $j$ depends on the properties of the site (via the basis functions $f_m$) with sensitivities $\beta_{i,m}^{p}$
+
+$$ p_{i,j} = \exp{\left(\sum_m{f_m \left(\bar{x}, \bar{z}; \theta\right) \beta_{i,m}^{p}}\right)}$$
+
+Abundance is modeled as a zero-inflated beta negative-binomial:
+
+$$ y_{i,j} \sim \mathcal{ZIBNB} \left(p_{i,j}, \mu_{i,j}, \alpha_i, r_i \right) $$
+
+## Fitting
+
+Model hyperparameters are:
+
+* number of basis functions? $|m|$
+* number of latent variables? $\dim{(\bar{z})}$
+
+What is estimated in the model-fitting:
+
+* shapes of the basis functions? $\theta_m$
+* sensitivities to basis functions? $\beta_{i,m}^{\mu}$ and $\beta_{i,m}^p$
+* parameters of the beta negative-binomial distribution $\alpha_i$ and $r_i$
+
+## Implementation Details
+
+[TODO, though see also `abundance-jsdm-manifesto`]
